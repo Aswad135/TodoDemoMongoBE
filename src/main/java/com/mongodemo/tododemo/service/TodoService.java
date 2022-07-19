@@ -1,11 +1,20 @@
 package com.mongodemo.tododemo.service;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.module.paramnames.ParameterNamesModule;
 import com.mongodemo.tododemo.commons.RestClient;
+import com.mongodemo.tododemo.dto.TodoListDTO;
 import com.mongodemo.tododemo.entity.Todo;
 import com.mongodemo.tododemo.entity.TodoList;
+import com.mongodemo.tododemo.feign.TodoAppPostgresClient;
+import com.mongodemo.tododemo.mapper.TodoListMapper;
+import com.mongodemo.tododemo.mapper.TodoMapper;
 import com.mongodemo.tododemo.repository.TodoRepository;
+import jdk.nashorn.internal.parser.JSONParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,12 +27,14 @@ import org.springframework.stereotype.Service;
 public class TodoService {
 
     TodoRepository todoRepository;
-    RestClient restClient = new RestClient();
     Logger logger = LoggerFactory.getLogger(TodoService.class);
 
+    TodoAppPostgresClient postgresClient;
+
     @Autowired
-    public TodoService(TodoRepository todoRepository) {
+    public TodoService(TodoRepository todoRepository, TodoAppPostgresClient postgresClient) {
         this.todoRepository = todoRepository;
+        this.postgresClient = postgresClient;
     }
 
     public ResponseEntity<Object> getListOfTodos(String listHash) {
@@ -44,17 +55,21 @@ public class TodoService {
     }
 
     private TodoList getTodoFromServer(String listHash) {
-
-        String Response = this.restClient.get("/todoList/listHash?listHash=" + listHash);
-        ObjectMapper objectMapper = new ObjectMapper();
-
-        try {
-            TodoList todoList = objectMapper.readValue(Response, TodoList.class);
-            return todoList;
-        } catch (JsonProcessingException e) {
-            logger.error(e.getMessage());
+        ResponseEntity<Object> Response = this.postgresClient.getTodoListByListHash(listHash);
+        if (Response.getStatusCode() == HttpStatus.OK) {
+            ObjectMapper mapper = new ObjectMapper()
+                    .registerModule(new ParameterNamesModule())
+                    .registerModule(new Jdk8Module())
+                    .registerModule(new JavaTimeModule());
+            TodoListDTO todoListDTO;
+            try {
+                String jsonString = new ObjectMapper().writeValueAsString(Response.getBody());
+                todoListDTO = mapper.readValue(jsonString, TodoListDTO.class);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+            return TodoListMapper.INSTANCE.fromDTO(todoListDTO);
         }
         return null;
-
     }
 }
